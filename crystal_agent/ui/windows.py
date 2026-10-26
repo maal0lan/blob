@@ -2,7 +2,7 @@ from __future__ import annotations
 import asyncio, logging, math, os, sys, uuid
 from pathlib import Path
 from PySide6.QtCore import Qt, QTimer, QRectF, QPoint, QRunnable, QThreadPool, Signal, QObject
-from PySide6.QtGui import QColor, QPainter, QRadialGradient, QLinearGradient, QPen, QBrush, QAction, QIcon, QFont
+from PySide6.QtGui import QColor, QPainter, QRadialGradient, QLinearGradient, QPen, QBrush, QAction, QIcon, QFont, QImage
 from PySide6.QtWidgets import (QApplication, QWidget, QMainWindow, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QTextEdit, QDialog, QFormLayout, QComboBox, QDoubleSpinBox, QSpinBox, QCheckBox,
     QListWidget, QFileDialog, QSystemTrayIcon, QMenu, QTabWidget, QMessageBox, QSlider, QGroupBox)
@@ -10,6 +10,7 @@ from ..config import Settings, APP_DIR
 from ..agent import OllamaAgent
 from ..history import recent, add, initialize
 from ..tts import SpeechEngine, play_wav
+from .lens import LensRenderer, exclude_from_capture
 
 class WorkerSignals(QObject):
     result = Signal(object)
@@ -24,23 +25,89 @@ class Worker(QRunnable):
         except Exception as e: self.signals.error.emit(str(e))
 
 class OrbWindow(QWidget):
+    """Liquid-glass orb.
+
+    Every frame it grabs the desktop pixels under itself and warps them through
+    a lens (see lens.py), so it reacts to wallpapers, windows, images and video.
+    The orb window is excluded from screen capture (Windows 10 2004+), which is
+    what stops it from photographing itself. If that is unavailable, or a frame
+    can't be captured, it falls back to the old painted glass orb.
+    """
     def __init__(self, open_chat, settings: Settings):
         super().__init__(); self.open_chat = open_chat; self.settings = settings; self.phase = 0.0; self.state = "idle"; self.drag_offset = None; self.press_global = None
+        self.lens = None; self.lens_img = None; self._lens_buf = None; self._lens_tried = False; self._frame_ms = 0.0
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground); self.setFixedSize(settings.orb_size, settings.orb_size)
         screen = QApplication.primaryScreen().availableGeometry()
         self.move(screen.right() - self.width() - 38, screen.bottom() - self.height() - 90)
-        self.timer = QTimer(self); self.timer.timeout.connect(self._tick); self.timer.start(35)
+        self.timer = QTimer(self); self.timer.timeout.connect(self._tick); self.timer.start(33)
         self.setToolTip("Crystal Companion · click to chat · right-click for settings")
 
-    def _tick(self): self.phase += .025; self.update()
+    # ---- lens setup -------------------------------------------------------
+    def showEvent(self, e):
+        super().showEvent(e)
+        if not self._lens_tried:  # needs a real native window handle, so do it on first show
+            self._lens_tried = True
+            if getattr(self.settings, "orb_refraction", True) and exclude_from_capture(int(self.winId())):
+                self.lens = LensRenderer(self._device_size(), wobble=getattr(self.settings, "orb_wobble", 1.0))
+                logging.getLogger("crystal").info("Orb: live refraction enabled")
+            else:
+                logging.getLogger("crystal").warning("Orb: refraction unavailable, using painted glass fallback")
+
+    def _device_size(self): return max(32, int(round(self.width() * self.devicePixelRatioF())))
+
+    def _grab_frame(self):
+        """Desktop pixels under the orb as an (n, n, 3) BGR numpy array, or None."""
+        import numpy as np
+        n = self._device_size(); scr = self.screen(); geo = scr.geometry(); tl = self.mapToGlobal(QPoint(0, 0))
+        pix = scr.grabWindow(0, tl.x() - geo.x(), tl.y() - geo.y(), self.width(), self.height())
+        if pix.isNull(): return None
+        img = pix.toImage().convertToFormat(QImage.Format_RGB32)
+        if img.width() != n or img.height() != n:
+            img = img.scaled(n, n, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        buf = np.frombuffer(img.constBits(), np.uint8).reshape(n, img.bytesPerLine() // 4, 4)
+        return buf[:, :n, :3]  # BGRA -> BGR
+
+    def _render_lens(self):
+        import time
+        t0 = time.perf_counter()
+        n = self._device_size()
+        if self.lens.n != n: self.lens.configure(n)
+        frame = self._grab_frame()
+        if frame is None: self.lens_img = None; return
+        out = self.lens.render(frame, self.phase * 2.2, self.state)
+        self._lens_buf = out  # keep the numpy buffer alive for the QImage
+        img = QImage(out.data, n, n, n * 4, QImage.Format_ARGB32_Premultiplied)
+        img.setDevicePixelRatio(self.devicePixelRatioF()); self.lens_img = img
+        # adapt frame rate if this machine is slow
+        self._frame_ms = self._frame_ms * .9 + (time.perf_counter() - t0) * 1000 * .1
+        self.timer.setInterval(int(min(66, max(16, self._frame_ms * 1.6))))
+
+    # ---- housekeeping -----------------------------------------------------
+    def _tick(self):
+        self.phase += .025
+        if self.lens is not None:
+            try: self._render_lens()
+            except Exception: logging.getLogger("crystal").exception("Lens render failed; falling back"); self.lens = None; self.lens_img = None
+        self.update()
     def set_state(self, state): self.state = state; self.update()
     def apply_settings(self, settings):
-        self.settings = settings; self.setFixedSize(settings.orb_size, settings.orb_size); self.update()
+        self.settings = settings; self.setFixedSize(settings.orb_size, settings.orb_size)
+        if self.lens is not None:
+            self.lens.wobble = getattr(settings, "orb_wobble", 1.0); self.lens.configure(self._device_size())
+        self.update()
+
+    # ---- painting ---------------------------------------------------------
     def paintEvent(self, event):
-        s = self.width(); r = s * .43; cx = cy = s / 2
-        p = QPainter(self); p.setRenderHint(QPainter.Antialiasing)
+        p = QPainter(self); p.setRenderHint(QPainter.Antialiasing); p.setRenderHint(QPainter.SmoothPixmapTransform)
         p.setOpacity(self.settings.orb_opacity)
+        if self.lens_img is not None: p.drawImage(0, 0, self.lens_img)
+        else: self._paint_procedural(p)
+        p.end()
+
+    def _paint_procedural(self, p):
+        """Original painted-glass look (fallback when live refraction is unavailable)."""
+        s = self.width(); r = s * .43; cx = cy = s / 2
         # Transparent fill lets the actual desktop remain visible through the sphere.
         p.setPen(Qt.NoPen)
         p.setBrush(QColor(120, 190, 255, 9)); p.drawEllipse(QRectF(cx-r, cy-r, 2*r, 2*r))
@@ -48,7 +115,7 @@ class OrbWindow(QWidget):
         g = QRadialGradient(cx-r*.30, cy-r*.38, r*1.55)
         g.setColorAt(0.0, QColor(255,255,255,26)); g.setColorAt(.24, QColor(105,180,255,12)); g.setColorAt(.63, QColor(90,100,255,9)); g.setColorAt(.88, QColor(30,220,255,24)); g.setColorAt(1, QColor(210,245,255,120))
         p.setBrush(QBrush(g)); p.drawEllipse(QRectF(cx-r,cy-r,2*r,2*r))
-        # Animated internal rings / caustics (procedural, not a screenshot shader).
+        # Animated internal rings / caustics.
         ring_color = QColor(130, 220, 255, 75 if self.state == "idle" else 145)
         p.setBrush(Qt.NoBrush); p.setPen(QPen(ring_color, 1.1))
         for i in range(3):
@@ -65,7 +132,8 @@ class OrbWindow(QWidget):
         # State indicator ring.
         col = {"idle": QColor(145,220,255,150), "thinking": QColor(190,135,255,230), "speaking": QColor(105,255,210,230), "error": QColor(255,100,120,230)}.get(self.state, QColor(145,220,255,150))
         p.setPen(QPen(col, 2.0)); p.setBrush(Qt.NoBrush); p.drawEllipse(QRectF(cx-r,cy-r,2*r,2*r))
-        p.end()
+
+    # ---- interaction (unchanged) -----------------------------------------
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
             self.press_global = e.globalPosition().toPoint(); self.drag_offset = self.press_global - self.frameGeometry().topLeft()
