@@ -8,12 +8,23 @@ The UI is built with PySide6. All windows are frameless and translucent where ap
 
 ### OrbWindow (`crystal_agent/ui/windows.py`)
 
-A floating, frameless, always-on-top transparent orb. Click to open chat; right-click to open settings; drag to reposition.
+A floating, frameless, always-on-top transparent orb. Click to open chat; right-click to open settings; drag to reposition. Also supports **hold-to-speak** voice input.
 
 - **Live refraction:** Grabs desktop pixels under the orb each frame (~30 FPS) and warps them through a lens (`LensRenderer` from `lens.py`). The orb window is excluded from screen capture via `SetWindowDisplayAffinity` (Windows 10 2004+) to avoid photographing itself.
 - **Fallback:** If refraction is unavailable, paints a procedural glass orb using layered Qt gradients, animated rings, highlights, and a state-indicator ring.
-- **States:** `idle`, `thinking`, `speaking`, `error` — each changes the rim glow color.
+- **States:** `idle`, `thinking`, `speaking`, `listening`, `error` — each changes the rim glow color. `listening` is shown while holding the orb for voice input.
 - **Settings-driven:** `orb_size`, `orb_opacity`, `orb_refraction`, `orb_wobble`.
+- **Hold-to-speak:** Short press (< 400ms) opens chat; long press (≥ 400ms) activates background STT via `speech_recognition.listen_in_background`. Recording stops on orb release; recognized text is sent as a user query.
+
+### SubtitleWindow (`crystal_agent/ui/windows.py`)
+
+A frameless glass subtitle widget positioned below the orb.
+
+- Displays fade-in/fade-out animated text for spoken input and assistant responses
+- `QGraphicsOpacityEffect` + `QPropertyAnimation` (350ms, InOutQuad) for fade in/out
+- `show_text(text, hold_ms=4000)`: shows text at full opacity, fades out after hold_ms
+- `bind_orb(orb)`: stores orb reference for positioning below it
+- Positioned below the orb; falls back to lower-right screen area if no orb bound
 
 ### ChatWindow (`crystal_agent/ui/windows.py`)
 
@@ -22,7 +33,7 @@ A frameless translucent panel positioned under the orb.
 - Transcript area with color-coded speakers (`YOU` = cyan, `CRYSTAL` = green, `ERROR` = pink)
 - Single-line text input; Enter sends
 - Buttons: Send, Settings, Diagnostics, Clear view, Close
-- Typed-input only (no microphone/STT yet)
+- Supports both typed input and voice input (from hold-to-speak STT)
 - Responses are not streamed; full answer appears after inference finishes
 
 ### SettingsWindow (`crystal_agent/ui/windows.py`)

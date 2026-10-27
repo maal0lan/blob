@@ -172,9 +172,14 @@ class OrbWindow(QWidget):
         self._start_voice_input()
 
     def _start_voice_input(self):
-        """Begin listening for voice input using background STT."""
+        """Begin listening for voice input using background STT.
+
+        Uses speech_recognition.listen_in_background so recording can be
+        stopped when the user releases the orb (hold-to-speak). A blocking
+        r.listen() would only stop on timeout, which made subtitles flash
+        and close before the user finished speaking.
+        """
         self._subtitle_text("Listening…", hold_ms=60000)
-        # Use background listening so we can stop when user releases the orb
         def run_stt():
             try:
                 import speech_recognition as sr
@@ -511,7 +516,11 @@ class CompanionApp:
         self.log.setLevel(getattr(logging,s.log_level,logging.DEBUG)); self.log.info("Runtime settings applied")
 
     def _handle_voice_query(self, text: str):
-        """Process recognized speech as a user query: show in chat + subtitles, save history, get answer."""
+        """Process recognized speech as a user query: show in chat + subtitles, save history, get answer.
+
+        Sends the recognized text to Ollama via OllamaAgent.ask() (POST /api/generate,
+        stream: False). The answer flows back through _on_voice_answer / _on_voice_error_answer.
+        """
         self.log.info("Voice query received (%d chars)", len(text))
         # Show user's spoken input in the chat transcript
         self.chat.append("YOU", text)

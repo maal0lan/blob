@@ -18,7 +18,7 @@ From the README roadmap:
 ## Known limitations
 
 1. **Refraction is a visual approximation** — Qt transparency shows the desktop through the orb, but no live pixel displacement yet
-2. **No speech input** — typed input + voice output only, not full voice-in/voice-out
+2. **Speech input (hold-to-speak)** — implemented via `speech_recognition.listen_in_background` (Google Web Speech API by default); local STT (faster-whisper/Vosk) is a future improvement — see [[issues/feature-hold-to-speak-subtitles]]
 3. **Responses are not streamed** — full answer appears after inference finishes
 4. **No automatic model router** — manual fast/reasoning selection only
 5. **MCP is not connected** — the attached MCP prototype is intentionally not launched
