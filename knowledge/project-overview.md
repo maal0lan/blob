@@ -11,7 +11,7 @@
 - **Primary target OS:** Windows 10 / Windows 11
 - **Entry point:** `python -m crystal_agent` (or `.\run.ps1`)
 - **Python requirement:** >=3.11
-- **Git branch:** `main`
+- **Git branch:** `main` (active feature: `feature/issue-11-hold-to-speak-subtitles`)
 - **Git user:** `maal0lan`
 
 ## What it is (and isn't)
@@ -25,10 +25,23 @@
 | Read-only, allowlisted local file tools | Autonomous shell / arbitrary computer control |
 | Persistent local SQLite history | Remote-synced chat history |
 | Tray-icon background operation | Installer / signed executable |
+| Hold-to-speak voice input with subtitles (issue #11) | Fully offline/local STT (uses Google Web Speech API by default) |
 
 ## Key differentiators from the browser reference
 
 A browser-version backend was used as reference material, but this is a clean native desktop foundation. Capabilities advertised by the browser prototype — streaming, microphone input, MCP, GPU shader refraction — are **not** yet complete here. See [[roadmap-and-future-work]] and [[security-and-privacy]].
+
+## Implemented features (v0.2.0)
+
+- **Hold-to-speak voice input** (issue #11): short click (< 400ms) opens chat; long press (≥ 400ms) activates STT via `speech_recognition`. Recording stops on orb release within ~1s. Recognized text flows through Ollama → chat + subtitles + TTS → SQLite history.
+- **Animated subtitles** (issue #11): `SubtitleWindow` frameless glass widget below the orb with `QPropertyAnimation` opacity fade in/out (350ms, InOutQuad).
+- **Orb states**: `idle`, `thinking`, `speaking`, `listening`, `error` — rim glow color changes per state.
+- **Ollama integration**: `OllamaAgent.ask()` sends POST to `/api/generate` (stream: False) with conversation context + optional file context.
+- **Local file tools**: `FolderTools` read-only list/search/read with path allowlist, extension guard, size limit.
+- **TTS**: Lazy Phonon model loading via `SpeechEngine`, WAV encoding, `sounddevice` playback.
+- **Settings**: JSON persistence in `%APPDATA%\CrystalCompanion\settings.json`, atomic write.
+- **History**: SQLite `history.sqlite3` with sessions/messages tables.
+- **Tray + diagnostics**: System tray menu, debug window with live log tail.
 
 ## Related notes
 

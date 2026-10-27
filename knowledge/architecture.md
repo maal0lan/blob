@@ -14,6 +14,14 @@ Qt widgets must only be updated from the UI thread. The following run inside `QR
 
 Worker results return through Qt signals. A long-running worker should always have a bounded timeout or a cancellation design before being used in production.
 
+### Hold-to-speak voice input (issue #11)
+
+The orb uses a hold threshold of 400ms (`_hold_threshold_ms`). Short clicks (< 400ms) open chat; long presses (≥ 400ms) set orb state to `listening` and start STT.
+
+**STT cancellation design:** `OrbWindow._start_voice_input()` runs a `Worker` that loops with short blocking `r.listen(timeout=1.0, phrase_time_limit=10)` calls while `self._is_holding` is `True`. Each `listen()` returns within ~1s so the worker can poll `_is_holding` and exit promptly on orb release (within ~1s). `listen_in_background()` was avoided because its underlying `r.listen()` can block indefinitely waiting for speech to start, which made subtitles flash and close before the user finished speaking.
+
+Recognized text returns via `Worker.signals.result` to `_on_voice_result()`, which calls `CompanionApp._handle_voice_query(text)`. Errors return via `Worker.signals.error` to `_on_voice_error()`.
+
 ## State
 
 | Concern | Storage | Notes |

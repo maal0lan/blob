@@ -1,12 +1,21 @@
 # Roadmap and Future Work — Crystal Companion
 
+## Completed
+
+- **Issue #11 — Hold-to-speak voice input with animated subtitles** (`feature/issue-11-hold-to-speak-subtitles` branch)
+  - Orb hold detection (400ms threshold) + `listening` state
+  - STT via `speech_recognition` blocking listen loop (stops on orb release within ~1s)
+  - `SubtitleWindow` frameless glass widget with `QPropertyAnimation` opacity fade in/out
+  - Voice pipeline: recognized text → chat + subtitles + Ollama `/api/generate` → SQLite history + TTS
+  - Note: STT uses Google Web Speech API by default (network required); local STT (faster-whisper/Vosk) is a future improvement
+
 ## Suggested development order
 
 From the README roadmap:
 
 1. Replace the procedural orb with a real GPU-based refraction shader or safe background capture pipeline; profile GPU/CPU cost
 2. Add cancellation, streamed tokens, and a proper visible task state machine
-3. Add local STT (e.g. faster-whisper or Vosk), push-to-talk, and voice activity detection
+3. Add local STT (e.g. faster-whisper or Vosk) to replace Google Web Speech API dependency
 4. Implement an explicit tool-call schema and confirmation prompts for every action beyond read-only file access
 5. Build a tested model router that chooses the small model for simple tasks and the larger model for complex ones
 6. Add full-text folder search and optional local RAG with a clear per-folder index/reset UI
@@ -18,7 +27,7 @@ From the README roadmap:
 ## Known limitations
 
 1. **Refraction is a visual approximation** — Qt transparency shows the desktop through the orb, but no live pixel displacement yet
-2. **Speech input (hold-to-speak)** — implemented via `speech_recognition.listen_in_background` (Google Web Speech API by default); local STT (faster-whisper/Vosk) is a future improvement — see [[issues/feature-hold-to-speak-subtitles]]
+2. **STT depends on Google Web Speech API** — `speech_recognition.recognize_google()` requires network; no fully offline STT yet (see roadmap item 3)
 3. **Responses are not streamed** — full answer appears after inference finishes
 4. **No automatic model router** — manual fast/reasoning selection only
 5. **MCP is not connected** — the attached MCP prototype is intentionally not launched

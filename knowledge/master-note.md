@@ -4,7 +4,7 @@ This is the index of all project knowledge notes. Each note links to related not
 
 ## Core notes
 
-- [[project-overview]] — What Crystal Companion is, version, status, core facts
+- [[project-overview]] — What Crystal Companion is, version, status, core facts, implemented features
 - [[architecture]] — System architecture, threading, state, trust boundaries, refraction options
 - [[module-map]] — Every module, its responsibility, and the request lifecycle
 - [[ui-system]] — Orb, chat, settings, tray, diagnostics, glass/liquid rendering
@@ -28,6 +28,9 @@ This is the index of all project knowledge notes. Each note links to related not
 
 ### AI / inference
 [[agent-and-inference]] → [[tools-and-permissions]] → [[tts-system]]
+
+### Voice input (hold-to-speak)
+[[project-overview]] (Implemented features) → [[ui-system]] (OrbWindow, SubtitleWindow) → [[issues/feature-hold-to-speak-subtitles]] (issue details)
 
 ### Data / persistence
 [[history-and-persistence]] → [[configuration-reference]]
@@ -53,6 +56,7 @@ See `knowledge/issues/` for ready-to-create issue descriptions:
 - [[issues/ui-refined-upgrades]] — refined UI upgrades
 - [[issues/feature-enhanced-file-access]] — enhanced file access support
 - [[issues/feature-file-modification-skills]] — file modification skills upgrades
+- [[issues/feature-hold-to-speak-subtitles]] — hold-to-speak voice input with subtitles ✅ implemented
 
 ## Project facts at a glance
 
@@ -67,7 +71,9 @@ See `knowledge/issues/` for ready-to-create issue descriptions:
 | UI framework | PySide6 |
 | LLM backend | Ollama (local `/api/generate`) |
 | TTS | Phonon (`gradium/phonon-40m-en`) via Hugging Face |
+| STT | `speech_recognition` (Google Web Speech API by default) |
 | History | SQLite (`history.sqlite3`) |
 | Settings | JSON (`settings.json`) |
 | Entry point | `python -m crystal_agent` |
 | Git branch | `main` |
+| Active feature branch | `feature/issue-11-hold-to-speak-subtitles` |

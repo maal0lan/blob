@@ -21,7 +21,7 @@ Enhance the orb interaction and inference UI:
 - Hold/long-press detection on the orb via `QTimer` (400ms threshold) + `_is_holding` flag
 - `SubtitleWindow`: frameless translucent widget below the orb with `QPropertyAnimation` opacity fade in/out
 - `listening` orb state (glow) while holding
-- STT via `speech_recognition.listen_in_background` callback pattern — records while holding, stops on release
+- STT via `speech_recognition` blocking listen loop (`r.listen(timeout=1.0, phrase_time_limit=10)`) — records while holding, stops on orb release within ~1s
 - Recognized text sent as a user query through `CompanionApp._handle_voice_query`
 - Subtitle shows both user's spoken input and Crystal's spoken responses
 - Chat transcript updated; history persisted to SQLite via `history.add()`

@@ -43,13 +43,14 @@ crystal_companion/
 | `crystal_agent/agent.py` | `OllamaAgent`: async httpx client to Ollama `/api/generate` and `/api/tags`, prompt construction, file-tool intent detection |
 | `crystal_agent/tools.py` | `FolderTools`: path canonicalization, allowlist enforcement, read-only list/search/read for text files |
 | `crystal_agent/tts.py` | `SpeechEngine`: lazy Phonon TTS (`AutoModelForTextToWaveform`), WAV encoding, `play_wav()` via sounddevice |
-| `crystal_agent/ui/windows.py` | `OrbWindow`, `ChatWindow`, `SettingsWindow`, `DebugWindow`, `CompanionApp` controller, `Worker`/`QRunnable` |
+| `crystal_agent/ui/windows.py` | `OrbWindow` (incl. hold-to-speak detection + STT loop), `ChatWindow`, `SettingsWindow`, `DebugWindow`, `CompanionApp` controller, `Worker`/`QRunnable`, `SubtitleWindow` |
 | `crystal_agent/ui/lens.py` | `LensRenderer`: live desktop refraction (wobbly glass blob, chromatic dispersion), `exclude_from_capture()` |
 | `crystal_agent/ui/glass.py` | `GlassPanel`, `GlassBackdrop`, `GlassPanelRenderer`, `DragLabel`, `GlassDialog` for static glass UI |
 | `crystal_agent/ui/config.py` | UI-side `Settings` (adds `orb_refraction`, `orb_wobble`, `glass_panels`) |
 
 ## Request lifecycle
 
+### Typed input
 1. User clicks the orb → chat window opens
 2. User types a query, presses Enter → `QRunnable` worker started
 3. If file access enabled, app checks for narrow explicit file intent (list/search/read quoted path)
@@ -57,6 +58,14 @@ crystal_companion/
 5. Response shown in chat; if history enabled, saved in SQLite
 6. If TTS enabled, Phonon loads lazily, generates WAV, `sounddevice` plays it
 7. Exceptions surfaced in chat UI and logged to `crystal.log`
+
+### Voice input (hold-to-speak, issue #11)
+1. User long-presses the orb (≥ 400ms) → orb state → `listening`, STT worker starts
+2. STT loops with short `r.listen()` calls while user holds; recording stops within ~1s of release
+3. Recognized text → `_on_voice_result()` → `CompanionApp._handle_voice_query(text)`
+4. Text shown as "YOU" in chat + subtitle (1500ms), sent to Ollama `/api/generate`
+5. Response shown as "CRYSTAL" in chat + subtitle (3000ms), saved to SQLite history
+6. If TTS enabled, Phonon speaks the response
 
 ## Related notes
 
