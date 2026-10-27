@@ -41,6 +41,19 @@ This is the index of all project knowledge notes. Each note links to related not
 ### Future work
 [[roadmap-and-future-work]] → [[development-guide]]
 
+### GitHub issues (local descriptions)
+See `knowledge/issues/` for ready-to-create issue descriptions:
+- [[issues/security-symlink-race-protection]] — reparse-point/symlink handling
+- [[issues/security-secret-file-detection]] — secret-file detection and warnings
+- [[issues/security-non-loopback-confirmation]] — non-loopback Ollama confirmation
+- [[issues/security-delete-history-ui]] — data retention / delete-history UI
+- [[issues/security-model-license-verification]] — model download/license verification
+- [[issues/security-automated-tests]] — automated security tests
+- [[issues/ui-60fps-glass-morphism]] — 60fps glass morphism animations
+- [[issues/ui-refined-upgrades]] — refined UI upgrades
+- [[issues/feature-enhanced-file-access]] — enhanced file access support
+- [[issues/feature-file-modification-skills]] — file modification skills upgrades
+
 ## Project facts at a glance
 
 | Field | Value |
