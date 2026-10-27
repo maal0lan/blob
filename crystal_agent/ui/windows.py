@@ -172,17 +172,38 @@ class OrbWindow(QWidget):
         self._start_voice_input()
 
     def _start_voice_input(self):
-        """Begin listening for voice input."""
-        self._subtitle_text("Listening…")
-        # Run STT in a worker so the UI thread stays responsive
+        """Begin listening for voice input using background STT."""
+        self._subtitle_text("Listening…", hold_ms=60000)
+        # Use background listening so we can stop when user releases the orb
         def run_stt():
             try:
                 import speech_recognition as sr
                 r = sr.Recognizer()
-                with sr.Microphone() as source:
+                mic = sr.Microphone()
+                self._stt_result = None
+                self._stt_error = None
+
+                def callback(recognizer, audio):
+                    try:
+                        self._stt_result = recognizer.recognize_google(audio)
+                    except Exception as e:
+                        self._stt_error = str(e)
+
+                with mic as source:
                     r.adjust_for_ambient_noise(source, duration=0.3)
-                    audio = r.listen(source, timeout=5, phrase_time_limit=15)
-                return r.recognize_google(audio)
+                stop_listening = r.listen_in_background(mic, callback, phrase_time_limit=15)
+                # Wait while user is holding the orb (up to 30s)
+                import time as _t
+                for _ in range(600):  # 600 * 50ms = 30s max
+                    if not self._is_holding:
+                        break
+                    _t.sleep(0.05)
+                stop_listening(wait_for_stop=False)
+                if self._stt_result is not None:
+                    return self._stt_result
+                if self._stt_error:
+                    raise RuntimeError(self._stt_error)
+                raise RuntimeError("No speech detected before release.")
             except Exception as e:
                 raise RuntimeError(f"Voice input failed: {e}")
 
