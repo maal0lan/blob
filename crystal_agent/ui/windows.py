@@ -50,7 +50,7 @@ class OrbWindow(QWidget):
         screen = QApplication.primaryScreen().availableGeometry()
         self.move(screen.right() - self.width() - 38, screen.bottom() - self.height() - 90)
         self.timer = QTimer(self); self.timer.timeout.connect(self._tick); self.timer.start(33)
-        self.setToolTip("Crystal Companion · click to chat · right-click for settings")
+        self.setToolTip("Crystal Companion · click to chat · hold to speak · right-click for settings")
 
     # ---- lens setup -------------------------------------------------------
     def showEvent(self, e):
@@ -174,12 +174,10 @@ class OrbWindow(QWidget):
     def _start_voice_input(self):
         """Begin listening for voice input using blocking STT loop.
 
-        Uses short blocking r.listen() calls in a loop, checking _is_holding
-        between each attempt so releasing the orb stops recording promptly
-        (within ~1s). listen_in_background() was avoided because its
-        underlying r.listen() can block indefinitely waiting for speech to
-        start, which made the subtitle flash and close before the user
-        finished speaking.
+        Keeps the microphone source open while short blocking listen calls run,
+        checking _is_holding between attempts so releasing the orb stops capture.
+        listen_in_background() is avoided because it can continue listening after
+        the user releases the orb.
         """
         self._subtitle_text("Listening…", hold_ms=60000)
         def run_stt():
@@ -193,35 +191,29 @@ class OrbWindow(QWidget):
                 with mic as source:
                     r.adjust_for_ambient_noise(source, duration=0.3)
 
-                # Loop while the user holds the orb. Each listen() call has a
-                # short timeout so we can poll _is_holding and stop on release.
-                while self._is_holding:
-                    try:
-                        audio = r.listen(source, timeout=1.0, phrase_time_limit=10)
-                    except sr.WaitTimeoutError:
-                        # No speech started within the timeout; keep listening
-                        # while the user is still holding.
-                        if not self._is_holding:
-                            break
-                        continue
-                    except sr.RequestError as e:
-                        raise RuntimeError(f"STT service error: {e}")
-                    try:
-                        self._stt_result = r.recognize_google(audio)
-                        if self._stt_result and self._stt_result.strip():
-                            return self._stt_result.strip()
-                    except sr.UnknownValueError:
-                        # Speech heard but not understood; keep listening
-                        if not self._is_holding:
-                            break
-                        continue
-                    except sr.RequestError as e:
-                        raise RuntimeError(f"STT service error: {e}")
+                    # The source must stay open for every listen() call.
+                    while self._is_holding:
+                        try:
+                            audio = r.listen(source, timeout=1.0, phrase_time_limit=10)
+                        except sr.WaitTimeoutError:
+                            if not self._is_holding:
+                                break
+                            continue
+                        try:
+                            self._stt_result = r.recognize_google(audio)
+                            if self._stt_result and self._stt_result.strip():
+                                return self._stt_result.strip()
+                        except sr.UnknownValueError:
+                            if not self._is_holding:
+                                break
+                            continue
+                        except sr.RequestError as e:
+                            raise RuntimeError(f"STT service error: {e}")
 
-                # Loop exited because user released the orb
-                if self._stt_result:
-                    return self._stt_result
-                raise RuntimeError("No speech recognized before release.")
+                    # Loop exited because user released the orb.
+                    if self._stt_result:
+                        return self._stt_result
+                    raise RuntimeError("No speech recognized before release.")
             except Exception as e:
                 raise RuntimeError(f"Voice input failed: {e}")
 
@@ -439,6 +431,7 @@ class SubtitleWindow(GlassDialog):
         self._anim = QPropertyAnimation(self._opacity, b"opacity", self)
         self._anim.setDuration(350)
         self._anim.setEasingCurve(QEasingCurve.InOutQuad)
+        self._anim.finished.connect(self.hide)
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
         self._hide_timer.timeout.connect(self._fade_out)
@@ -450,24 +443,20 @@ class SubtitleWindow(GlassDialog):
         self._hide_timer.stop()
         if self._anim.state() == QPropertyAnimation.Running:
             self._anim.stop()
-            self._anim.disconnect()
 
         self.label.setText(text)
         self.adjustSize()
         self._position_below_orb()
         self.show()
         self._opacity.setOpacity(1.0)
-        self._anim.finished.disconnect()
 
         # Fade out after hold_ms
         self._hide_timer.start(hold_ms)
 
     def _fade_out(self):
         self._hide_timer.stop()
-        self._anim.finished.disconnect()
         self._anim.setStartValue(self._opacity.opacity())
         self._anim.setEndValue(0.0)
-        self._anim.finished.connect(self.hide)
         self._anim.start()
 
     def clear(self):

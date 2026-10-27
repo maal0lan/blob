@@ -2,7 +2,7 @@
 
 **Status:** development prototype / v0.2.0. This is a native Python + Qt desktop app, not a website wrapped in a browser frame. The transparent orb and chat/settings windows are separate frameless desktop windows. Ollama handles text generation locally; an optional local Hugging Face Phonon model synthesizes spoken answers.
 
-> **Reality check:** the orb and chat/settings/diagnostics panels use native Qt windows. The orb and panels sample and refract desktop pixels when Windows capture exclusion is available; otherwise they fall back to painted glass. This is not a GPU shader. Microphone input / speech-to-text is not implemented. TTS model licensing and system compatibility must be checked before use.
+> **Reality check:** the orb and chat/settings/diagnostics panels use native Qt windows. The orb and panels sample and refract desktop pixels when Windows capture exclusion is available; otherwise they fall back to painted glass. This is not a GPU shader. Push-to-talk speech recognition uses Google's online recognition service; typed input remains available. TTS model licensing and system compatibility must be checked before use.
 
 ## Contents
 
@@ -39,7 +39,7 @@
 | Selected-folder access | Limited implementation | Explicit list/search/read intents; only supported text files; read-only |
 | Visible diagnostics | Implemented | Live log window plus rotating log file and console output |
 | Launch on Windows sign-in | Implemented | Optional current-user Run registry entry; disable in Settings to remove it |
-| Microphone / STT | Not implemented | The current app accepts typed text only |
+| Microphone / STT | Implemented | Hold the orb for push-to-talk; Google recognition needs internet access |
 | MCP integrations | Not wired into the new desktop app | The uploaded MCP prototype is not automatically launched; see security note |
 | Autonomous shell / arbitrary computer control | Deliberately absent | No shell execution or arbitrary program launching |
 | Real optical desktop refraction | Not implemented | Needs a dedicated shader/capture implementation and testing |
@@ -326,7 +326,7 @@ The current tests cover the folder allowlist, text-only extension guard, file-si
 ## Known limitations
 
 1. **Refraction is a visual approximation.** Qt transparency shows the desktop through the orb, but the current paint code does not displace the actual pixels behind the orb. True refraction likely needs a Windows composition/capture strategy or a GPU shader and careful exclusion of the app window to avoid recursive capture.
-2. **No speech input.** The application does not record a microphone or run STT yet. It is voice-output + typed-input, not a full voice-in/voice-out assistant.
+2. **Speech recognition uses an online service.** Hold the orb to record a spoken query; the captured audio is sent to Google's recognition service for transcription. Typed input is available as an alternative.
 3. **Responses are not streamed.** The agent waits for the complete Ollama response before showing it.
 4. **No automatic model router.** You manually select fast or reasoning model mode.
 5. **MCP is not connected.** The attached `mcp_client.py` prototype has protocol and process-management risks and is intentionally not launched by this app. Integrate it only after adding proper JSON-RPC framing, stderr/stdout separation, per-tool allowlists, timeouts, cancellation and user consent.
@@ -349,6 +349,13 @@ The current tests cover the folder allowlist, text-only extension guard, file-si
 - Run `ollama list` and copy the exact model tag into Settings.
 - Pull the model if it is available in your Ollama catalogue.
 - Do not use a Hugging Face repository ID as an Ollama tag unless your Ollama runtime explicitly supports that name.
+
+### Voice input does not work
+
+- Hold the orb (do not just click it) while speaking; release it to send the recognized query.
+- Allow microphone access in Windows privacy settings and select a working input device.
+- SpeechRecognition uses Google's online recognition service, so an internet connection is required and microphone audio is sent for transcription.
+- Confirm `SpeechRecognition` and `PyAudio` are installed in the same virtual environment used to launch Crystal.
 
 ### Phonon import/model loading fails
 
@@ -389,6 +396,7 @@ This version has procedural highlights and rings, not live pixel refraction. Tha
 ## Security and privacy
 
 - LLM requests go to the configured Ollama endpoint. With the default local endpoint, inference is local to the machine, but model downloads and gated TTS downloads use the network.
+- Push-to-talk transcription uses Google's online speech recognition service; microphone audio leaves the device for transcription. Do not use voice input for sensitive content.
 - Chat history is stored locally in SQLite unless disabled. Turning off future persistence does not delete previous history; remove the database only after quitting the app if you want to erase it.
 - Folder access is opt-in, restricted to selected roots, read-only, extension-filtered and size-limited. It is not a security sandbox against every possible filesystem edge case.
 - Never add folders containing private keys, passwords, browser profiles, credentials or sensitive personal records.
@@ -403,7 +411,7 @@ Suggested order for future development:
 
 1. Replace the procedural orb with a real GPU-based refraction shader or safe background capture pipeline; profile GPU/CPU cost.
 2. Add cancellation, streamed tokens and a proper visible task state machine.
-3. Add local STT (e.g. faster-whisper or Vosk), push-to-talk and voice activity detection.
+3. Replace online speech recognition with local STT (e.g. faster-whisper or Vosk) and add voice activity detection.
 4. Implement an explicit tool-call schema and confirmation prompts for every action beyond read-only file access.
 5. Build a tested model router that chooses the small model for simple tasks and the larger model for complex ones.
 6. Add full-text folder search and optional local RAG with a clear per-folder index/reset UI.
