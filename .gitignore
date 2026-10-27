@@ -9,3 +9,5 @@ models/
 *.wav
 .DS_Store
 Thumbs.db
+blob/
+.obsidian/
