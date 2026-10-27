@@ -158,10 +158,10 @@ class OrbWindow(QWidget):
             if self.drag_offset is not None:
                 delta = e.globalPosition().toPoint() - self.press_global
                 self.drag_offset = None; self.press_global = None
-                if not self._is_holding and delta.manhattanLength() < 5:
+                if delta.manhattanLength() < 5:
                     if elapsed_ms < self._hold_threshold_ms:
                         self.open_chat()   # short click → open chat
-                    else:
+                    elif self._is_holding:
                         self._stop_voice_input()  # release after hold → process voice
         elif e.button() == Qt.RightButton: pass
 
