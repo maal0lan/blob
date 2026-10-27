@@ -1,7 +1,8 @@
 from __future__ import annotations
-import asyncio, logging, math, os, sys, uuid
+import asyncio, logging, math, os, sys, time, uuid
 from pathlib import Path
-from PySide6.QtCore import Qt, QTimer, QRectF, QPoint, QRunnable, QThreadPool, Signal, QObject
+from PySide6.QtCore import Qt, QTimer, QRectF, QPoint, QRunnable, QThreadPool, Signal, QObject, QPropertyAnimation, QEasingCurve
+from PySide6.QtWidgets import QGraphicsOpacityEffect
 from PySide6.QtGui import QColor, QPainter, QRadialGradient, QLinearGradient, QPen, QBrush, QAction, QIcon, QFont, QImage
 from PySide6.QtWidgets import (QApplication, QWidget, QMainWindow, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QTextEdit, QFormLayout, QComboBox, QDoubleSpinBox, QSpinBox, QCheckBox,
@@ -34,9 +35,16 @@ class OrbWindow(QWidget):
     what stops it from photographing itself. If that is unavailable, or a frame
     can't be captured, it falls back to the old painted glass orb.
     """
-    def __init__(self, open_chat, settings: Settings):
-        super().__init__(); self.open_chat = open_chat; self.settings = settings; self.phase = 0.0; self.state = "idle"; self.drag_offset = None; self.press_global = None
+    def __init__(self, open_chat, settings: Settings, ctrl=None):
+        super().__init__(); self.open_chat = open_chat; self.settings = settings; self.ctrl = ctrl; self.phase = 0.0; self.state = "idle"; self.drag_offset = None; self.press_global = None
         self.lens = None; self.lens_img = None; self._lens_buf = None; self._lens_tried = False; self._frame_ms = 0.0
+        # Hold-to-speak detection
+        self._press_time = 0.0
+        self._hold_threshold_ms = 400   # press longer than this = voice input
+        self._hold_timer = QTimer(self)
+        self._hold_timer.setSingleShot(True)
+        self._hold_timer.timeout.connect(self._on_hold)
+        self._is_holding = False
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground); self.setFixedSize(settings.orb_size, settings.orb_size)
         screen = QApplication.primaryScreen().availableGeometry()
@@ -134,18 +142,80 @@ class OrbWindow(QWidget):
         col = {"idle": QColor(145,220,255,150), "thinking": QColor(190,135,255,230), "speaking": QColor(105,255,210,230), "error": QColor(255,100,120,230)}.get(self.state, QColor(145,220,255,150))
         p.setPen(QPen(col, 2.0)); p.setBrush(Qt.NoBrush); p.drawEllipse(QRectF(cx-r,cy-r,2*r,2*r))
 
-    # ---- interaction (unchanged) -----------------------------------------
+    # ---- interaction -------------------------------------------------------
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
             self.press_global = e.globalPosition().toPoint(); self.drag_offset = self.press_global - self.frameGeometry().topLeft()
+            self._press_time = time.perf_counter()
+            self._hold_timer.start(self._hold_threshold_ms)
         elif e.button() == Qt.RightButton: self.open_chat(settings_only=True)
     def mouseMoveEvent(self, e):
         if self.drag_offset is not None and e.buttons() & Qt.LeftButton: self.move(e.globalPosition().toPoint()-self.drag_offset)
     def mouseReleaseEvent(self, e):
-        if e.button() == Qt.LeftButton and self.drag_offset is not None:
-            delta = e.globalPosition().toPoint() - self.press_global
-            self.drag_offset = None; self.press_global = None
-            if delta.manhattanLength() < 5: self.open_chat()
+        if e.button() == Qt.LeftButton:
+            self._hold_timer.stop()
+            elapsed_ms = (time.perf_counter() - self._press_time) * 1000
+            if self.drag_offset is not None:
+                delta = e.globalPosition().toPoint() - self.press_global
+                self.drag_offset = None; self.press_global = None
+                if not self._is_holding and delta.manhattanLength() < 5:
+                    if elapsed_ms < self._hold_threshold_ms:
+                        self.open_chat()   # short click → open chat
+                    else:
+                        self._stop_voice_input()  # release after hold → process voice
+        elif e.button() == Qt.RightButton: pass
+
+    def _on_hold(self):
+        """Triggered when the press exceeds the hold threshold."""
+        self._is_holding = True
+        self.state = "listening"
+        self._start_voice_input()
+
+    def _start_voice_input(self):
+        """Begin listening for voice input (placeholder: uses speech_recognition)."""
+        self._subtitle_text("Listening…")
+        # Run STT in a worker so the UI thread stays responsive
+        def run_stt():
+            try:
+                import speech_recognition as sr
+                r = sr.Recognizer()
+                with sr.Microphone() as source:
+                    r.adjust_for_ambient_noise(source, duration=0.3)
+                    audio = r.listen(source, timeout=10, phrase_time_limit=30)
+                return r.recognize_google(audio)
+            except Exception as e:
+                raise RuntimeError(f"Voice input failed: {e}")
+
+        w = Worker(run_stt)
+        w.signals.result.connect(self._on_voice_result)
+        w.signals.error.connect(self._on_voice_error)
+        self.ctrl.pool.start(w)
+
+    def _stop_voice_input(self):
+        """Stop listening and process whatever was captured."""
+        self._is_holding = False
+        self.state = "idle"
+
+    def _on_voice_result(self, text: str):
+        """Handle recognized speech: show subtitle and send as query."""
+        self._is_holding = False
+        self.state = "idle"
+        self._subtitle_text(text)
+        # Send the recognized text as a user query through the chat flow
+        self.ctrl._handle_voice_query(text)
+
+    def _on_voice_error(self, message: str):
+        self._is_holding = False
+        self.state = "idle"
+        self._subtitle_text(f"Voice error: {message}")
+        import time
+        QTimer.singleShot(2500, lambda: self._subtitle_text(""))
+
+    def _subtitle_text(self, text: str):
+        """Show text in the subtitle window below the orb."""
+        sub = self.ctrl.subtitle
+        sub.bind_orb(self)
+        sub.show_text(text)
 
 class ChatWindow(GlassDialog):
     def __init__(self, app_controller):
@@ -299,11 +369,95 @@ class DebugWindow(GlassDialog):
         self.text.setPlainText(data); from PySide6.QtGui import QTextCursor
         self.text.moveCursor(QTextCursor.End)
 
+class SubtitleWindow(GlassDialog):
+    """Frameless glass subtitle widget shown below the orb.
+
+    Displays fade-in/fade-out animated text for spoken input and assistant
+    responses. Text appears briefly and fades out automatically.
+    """
+
+    def __init__(self, glass_enabled: bool = True):
+        super().__init__("Crystal / Subtitles", 340, 90, enabled=glass_enabled)
+        self.setStyleSheet(STYLE)
+        self.setWindowFlags(
+            Qt.Dialog | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
+        )
+
+        pl = self.body_layout
+        self.label = QLabel()
+        self.label.setObjectName("subtitle")
+        self.label.setWordWrap(True)
+        self.label.setAlignment(Qt.AlignCenter)
+        pl.addWidget(self.label)
+
+        # Opacity effect for fade in/out animation
+        self._opacity = QGraphicsOpacityEffect(self.label)
+        self.label.setGraphicsEffect(self._opacity)
+        self._opacity.setOpacity(0.0)
+
+        self._anim = QPropertyAnimation(self._opacity, b"opacity", self)
+        self._anim.setDuration(300)
+        self._anim.setEasingCurve(QEasingCurve.InOutQuad)
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.timeout.connect(self._fade_out)
+
+        self.hide()
+
+    def show_text(self, text: str, hold_ms: int = 2500):
+        """Show `text` with fade in, hold for `hold_ms`, then fade out."""
+        self._hide_timer.stop()
+        if self._anim.state() == QPropertyAnimation.Running:
+            self._anim.stop()
+
+        self.label.setText(text)
+        self.adjustSize()
+        self._position_below_orb()
+        self.show()
+
+        # Fade in
+        self._anim.setStartValue(self._opacity.opacity())
+        self._anim.setEndValue(1.0)
+        self._anim.finished.connect(lambda: self._hold_then_fade(hold_ms))
+        self._anim.start()
+
+    def _hold_then_fade(self, hold_ms: int):
+        self._hide_timer.start(hold_ms)
+
+    def _fade_out(self):
+        self._anim.finished.disconnect()
+        self._anim.setStartValue(self._opacity.opacity())
+        self._anim.setEndValue(0.0)
+        self._anim.finished.connect(self.hide)
+        self._anim.start()
+
+    def _position_below_orb(self):
+        # Position below the orb if we have a reference; otherwise center screen.
+        orb = getattr(self, "_orb_ref", None)
+        if orb is not None:
+            screen = QApplication.primaryScreen().availableGeometry()
+            x = orb.x() + orb.width() // 2 - self.width() // 2
+            y = orb.y() + orb.height() + 12
+            if y + self.height() > screen.bottom():
+                y = orb.y() - self.height() - 12
+            self.move(max(screen.left(), min(x, screen.right() - self.width())),
+                      max(screen.top(), y))
+        else:
+            screen = QApplication.primaryScreen().availableGeometry()
+            self.move(
+                screen.right() - self.width() - 38,
+                screen.bottom() - self.height() - 130,
+            )
+
+    def bind_orb(self, orb):
+        self._orb_ref = orb
+
+
 class CompanionApp:
     def __init__(self, app: QApplication):
         self.app=app; self.settings=Settings.load(); from ..logging_setup import configure_logging
         self.log=configure_logging(self.settings.log_level); initialize(); self.agent=OllamaAgent(self.settings,self.log); self.tts=SpeechEngine(self.log); self.pool=QThreadPool.globalInstance()
-        self.orb=OrbWindow(self.open_chat,self.settings); self.chat=ChatWindow(self); self.settings_win=None; self.debug=None
+        self.orb=OrbWindow(self.open_chat,self.settings,self); self.chat=ChatWindow(self); self.subtitle=SubtitleWindow(self.settings.glass_panels); self.settings_win=None; self.debug=None
         self.tray=QSystemTrayIcon(self._icon(),app); menu=QMenu(); a=QAction("Open chat",app); a.triggered.connect(self.open_chat); menu.addAction(a)
         b=QAction("Settings",app); b.triggered.connect(self.open_settings); menu.addAction(b)
         c=QAction("Diagnostics",app); c.triggered.connect(self.toggle_debug); menu.addAction(c); menu.addSeparator()
@@ -322,9 +476,62 @@ class CompanionApp:
         self.settings_win.show(); self.settings_win.raise_(); self.settings_win.activateWindow()
     def apply_settings(self,s):
         self.settings=s; self.agent.settings=s; self.orb.apply_settings(s); self.chat.set_glass_enabled(s.glass_panels)
+        self.subtitle.set_glass_enabled(s.glass_panels)
         if self.settings_win is not None: self.settings_win.set_glass_enabled(s.glass_panels)
         if self.debug is not None: self.debug.set_glass_enabled(s.glass_panels)
         self.log.setLevel(getattr(logging,s.log_level,logging.DEBUG)); self.log.info("Runtime settings applied")
+
+    def _handle_voice_query(self, text: str):
+        """Process recognized speech as a user query: show in chat + subtitles, save history, get answer."""
+        self.log.info("Voice query received (%d chars)", len(text))
+        # Show user's spoken input in the chat transcript
+        self.chat.append("YOU", text)
+        # Show it in subtitles too
+        self.subtitle.bind_orb(self.orb)
+        self.subtitle.show_text(text, hold_ms=1500)
+
+        old = recent(self.chat.session_id) if self.settings.remember_history else []
+        self.chat.busy = True
+        self.chat.send_btn.setEnabled(False)
+        self.chat.status.setText("◌ THINKING")
+        self.orb.set_state("thinking")
+
+        worker = Worker(lambda: asyncio.run(self.agent.ask(text, old, self.settings)))
+        worker.signals.result.connect(lambda answer: self._on_voice_answer(text, answer))
+        worker.signals.error.connect(self._on_voice_error_answer)
+        self.pool.start(worker)
+
+    def _on_voice_answer(self, query: str, answer: str):
+        self.log.info("Voice assistant response received (%d chars)", len(answer))
+        self.chat.append("CRYSTAL", answer)
+        self.subtitle.bind_orb(self.orb)
+        self.subtitle.show_text(answer, hold_ms=3000)
+        if self.settings.remember_history:
+            add(self.chat.session_id, "user", query)
+            add(self.chat.session_id, "assistant", answer)
+        self.chat.busy = False
+        self.chat.send_btn.setEnabled(True)
+        self.chat.status.setText("● READY")
+        self.orb.set_state("speaking" if self.settings.tts_enabled else "idle")
+        if self.settings.tts_enabled:
+            self.chat.status.setText("♫ SPEAKING / LOADING TTS")
+            w = Worker(lambda: self.tts.synthesize(answer, self.settings.tts_model, self.settings.tts_speed, self.settings.tts_device))
+            w.signals.result.connect(self.chat.play_audio)
+            w.signals.error.connect(self.chat.tts_error)
+            self.pool.start(w)
+        else:
+            self.orb.set_state("idle")
+
+    def _on_voice_error_answer(self, message: str):
+        self.log.error("Voice request failed: %s", message)
+        self.chat.append("ERROR", message)
+        self.subtitle.bind_orb(self.orb)
+        self.subtitle.show_text(f"Error: {message}", hold_ms=3000)
+        self.chat.busy = False
+        self.chat.send_btn.setEnabled(True)
+        self.chat.status.setText("! ERROR")
+        self.orb.set_state("error")
+
     def toggle_debug(self):
         if self.debug is None: self.debug=DebugWindow(self.settings.glass_panels); self.debug.finished.connect(lambda _: setattr(self,"debug",None))
         self.debug.show(); self.debug.raise_(); self.debug.activateWindow()
@@ -345,4 +552,5 @@ QTabBar::tab { background: rgba(50,70,110,80); padding: 10px 16px; margin: 3px; 
 QTabBar::tab:selected { background: rgba(75,130,220,145); }
 QListWidget { background: rgba(5,10,24,230); border: 1px solid rgba(130,170,230,80); border-radius: 8px; padding: 6px; }
 QCheckBox { spacing: 8px; }
+QLabel#subtitle { color: #e7efff; font-size: 11pt; font-weight: 600; background: transparent; }
 """
