@@ -172,7 +172,7 @@ class OrbWindow(QWidget):
         self._start_voice_input()
 
     def _start_voice_input(self):
-        """Begin listening for voice input (placeholder: uses speech_recognition)."""
+        """Begin listening for voice input."""
         self._subtitle_text("Listening…")
         # Run STT in a worker so the UI thread stays responsive
         def run_stt():
@@ -181,7 +181,7 @@ class OrbWindow(QWidget):
                 r = sr.Recognizer()
                 with sr.Microphone() as source:
                     r.adjust_for_ambient_noise(source, duration=0.3)
-                    audio = r.listen(source, timeout=10, phrase_time_limit=30)
+                    audio = r.listen(source, timeout=5, phrase_time_limit=15)
                 return r.recognize_google(audio)
             except Exception as e:
                 raise RuntimeError(f"Voice input failed: {e}")
@@ -192,30 +192,29 @@ class OrbWindow(QWidget):
         self.ctrl.pool.start(w)
 
     def _stop_voice_input(self):
-        """Stop listening and process whatever was captured."""
+        """Stop listening and reset state."""
         self._is_holding = False
         self.state = "idle"
 
     def _on_voice_result(self, text: str):
-        """Handle recognized speech: show subtitle and send as query."""
+        """Handle recognized speech: send as query (subtitle handled by _handle_voice_query)."""
         self._is_holding = False
         self.state = "idle"
-        self._subtitle_text(text)
         # Send the recognized text as a user query through the chat flow
+        # _handle_voice_query will show the subtitle itself
         self.ctrl._handle_voice_query(text)
 
     def _on_voice_error(self, message: str):
         self._is_holding = False
         self.state = "idle"
         self._subtitle_text(f"Voice error: {message}")
-        import time
         QTimer.singleShot(2500, lambda: self._subtitle_text(""))
 
-    def _subtitle_text(self, text: str):
+    def _subtitle_text(self, text: str, hold_ms: int = 2500):
         """Show text in the subtitle window below the orb."""
         sub = self.ctrl.subtitle
         sub.bind_orb(self)
-        sub.show_text(text)
+        sub.show_text(text, hold_ms=hold_ms)
 
 class ChatWindow(GlassDialog):
     def __init__(self, app_controller):
