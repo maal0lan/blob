@@ -202,15 +202,18 @@ class OrbWindow(QWidget):
         self.state = "idle"
         # Send the recognized text as a user query through the chat flow
         # _handle_voice_query will show the subtitle itself
-        self.ctrl._handle_voice_query(text)
+        if self.ctrl is not None:
+            self.ctrl.log.info("Voice recognized: %s", text)
+            self.ctrl._handle_voice_query(text)
 
     def _on_voice_error(self, message: str):
         self._is_holding = False
         self.state = "idle"
-        self._subtitle_text(f"Voice error: {message}")
-        QTimer.singleShot(2500, lambda: self._subtitle_text(""))
+        if self.ctrl is not None:
+            self.ctrl.log.error("Voice input error: %s", message)
+        self._subtitle_text(f"Voice error: {message}", hold_ms=3000)
 
-    def _subtitle_text(self, text: str, hold_ms: int = 2500):
+    def _subtitle_text(self, text: str, hold_ms: int = 3000):
         """Show text in the subtitle window below the orb."""
         sub = self.ctrl.subtitle
         sub.bind_orb(self)
