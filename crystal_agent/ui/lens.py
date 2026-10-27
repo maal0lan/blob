@@ -48,7 +48,7 @@ STATE_COLORS = {  # BGR
 
 class LensRenderer:
     def __init__(self, size: int, magnify: float = 0.74, edge_pull: float = 0.56,
-                 dispersion: float = 0.095, wobble: float = 0.5):
+                 dispersion: float = 0.075, wobble: float = 1.0):
         self.magnify = magnify          # <1 magnifies the centre (0.74 ≈ 1.35x)
         self.edge_pull = edge_pull      # how hard the rim bends the background
         self.dispersion = dispersion    # rainbow fringing strength
@@ -154,4 +154,72 @@ class LensRenderer:
         res = np.empty((n, n, 4), np.uint8)
         res[..., :3] = (out * alpha[..., None]).astype(np.uint8)  # premultiplied
         res[..., 3] = (alpha * 255).astype(np.uint8)
+        return res
+
+
+# =============================================================================
+#  Static glass panel (chat window / dialogs). No animation: geometry maps are
+#  precomputed once per size, a render is just a few remaps + a blend.
+# =============================================================================
+def _remap(ch: np.ndarray, sx: np.ndarray, sy: np.ndarray) -> np.ndarray:
+    if cv2 is not None:
+        return cv2.remap(np.ascontiguousarray(ch), sx, sy, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+    h, w = ch.shape
+    sx = np.clip(sx, 0, w - 1.001); sy = np.clip(sy, 0, h - 1.001)
+    x0, y0 = sx.astype(np.int32), sy.astype(np.int32)
+    fx, fy = sx - x0, sy - y0
+    a = ch[y0, x0].astype(np.float32)
+    return (a * (1 - fx) * (1 - fy) + ch[y0, x0 + 1] * fx * (1 - fy)
+            + ch[y0 + 1, x0] * (1 - fx) * fy + ch[y0 + 1, x0 + 1] * fx * fy)
+
+
+class GlassPanelRenderer:
+    """Clear rounded glass with desktop refraction and subtle edge highlights."""
+
+    def __init__(self, radius=18.0, bevel=24.0, refraction=0.62, dispersion=0.22):
+        self.radius, self.bevel, self.refraction = radius, bevel, refraction
+        self.dispersion = dispersion
+        self.key = None
+
+    def configure(self, ox, oy, pw, ph, scale=1.0):
+        """Panel occupies (ox, oy, pw, ph) device px inside the captured frame."""
+        key = (ox, oy, pw, ph, scale)
+        if key == self.key: return
+        self.key = key; s = scale
+        self.ox, self.oy, self.pw, self.ph, self.s = ox, oy, pw, ph, scale
+        r = min(self.radius * s, min(pw, ph) / 2 - 1); bevel = self.bevel * s
+        ys, xs = np.mgrid[0:ph, 0:pw].astype(np.float32)
+        px, py = xs + 0.5 - pw / 2, ys + 0.5 - ph / 2
+        qx, qy = np.abs(px) - (pw / 2 - r), np.abs(py) - (ph / 2 - r)
+        d = np.hypot(np.maximum(qx, 0), np.maximum(qy, 0)) + np.minimum(np.maximum(qx, qy), 0) - r  # <0 inside
+        gy, gx = np.gradient(d); gn = np.hypot(gx, gy) + 1e-6
+        nxo, nyo = gx / gn, gy / gn                      # outward normal
+        depth = np.clip(-d / bevel, 0, 1)                # 0 at edge .. 1 at bevel inner side
+        off = self.refraction * bevel * (1 - depth) ** 2.2
+        k = self.dispersion
+        self.maps = []
+        for kc in (-k, 0.0, k):                          # B, G, R
+            self.maps.append(((xs + ox + nxo * off * (1 + kc)).astype(np.float32),
+                              (ys + oy + nyo * off * (1 + kc)).astype(np.float32)))
+        # --- static lighting
+        facing = nxo * -0.62 + nyo * -0.78
+        ring = (1 - depth) ** 3
+        rim = ring * (0.25 + 0.75 * np.maximum(facing, 0) ** 2 + 0.40 * np.maximum(-facing, 0) ** 2)
+        hair = np.clip(1 + d / (1.6 * s), 0, 1) * (0.30 + 0.70 * np.abs(facing))
+        v = (ys + 0.5) / ph; u = (xs + 0.5) / pw
+        sheen = 0.07 * np.clip(1 - v / 0.42, 0, 1) ** 1.5                       # soft top reflection
+        streak = 0.05 * np.exp(-((((u * 0.8 - v * 0.6) + 0.30) / 0.07) ** 2))   # diagonal glint
+        inside = (d < 0).astype(np.float32)
+        self.light = np.clip(0.60 * rim + 0.50 * hair + (sheen + streak) * inside, 0, 0.92)[..., None].astype(np.float32)
+        self.alpha = np.clip(0.5 - d, 0, 1).astype(np.float32)[..., None]
+    def render(self, frame_bgr: np.ndarray) -> np.ndarray:
+        """frame_bgr: full captured window (H, W, 3) uint8. Returns (ph, pw, 4) premultiplied BGRA."""
+        pw, ph = self.pw, self.ph
+        sharp = np.empty((ph, pw, 3), np.float32)
+        for i, (mx, my) in enumerate(self.maps):
+            sharp[..., i] = _remap(frame_bgr[..., i], mx, my)
+        body = sharp * (1 - self.light) + 255.0 * self.light
+        res = np.empty((ph, pw, 4), np.uint8)
+        res[..., :3] = (np.clip(body, 0, 255) * self.alpha).astype(np.uint8)
+        res[..., 3] = (self.alpha[..., 0] * 255).astype(np.uint8)
         return res

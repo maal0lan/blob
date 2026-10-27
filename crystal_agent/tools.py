@@ -5,14 +5,31 @@ TEXT_SUFFIXES = {".txt", ".md", ".py", ".json", ".csv", ".log", ".yaml", ".yml",
 
 class FolderTools:
     def __init__(self, folders: list[str], max_file_mb: int = 2):
-        self.roots = [Path(p).expanduser().resolve() for p in folders if Path(p).expanduser().exists()]
+        self.roots = []
+        for raw in folders:
+            p = Path(raw).expanduser()
+            if p.exists() and p.is_dir():
+                self.roots.append(p.resolve())
         self.max_bytes = max_file_mb * 1024 * 1024
 
+    def _is_within_root(self, candidate: Path) -> bool:
+        resolved = candidate.resolve(strict=False)
+        return any(resolved == root or root in resolved.parents for root in self.roots)
+
     def _safe(self, raw: str) -> Path:
-        p = Path(raw).expanduser().resolve()
-        if not any(p == root or root in p.parents for root in self.roots):
+        if raw is None:
             raise PermissionError("That path is outside the folders you allowed in Settings.")
-        return p
+
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            candidates = [(root / candidate).resolve(strict=False) for root in self.roots]
+        else:
+            candidates = [candidate.resolve(strict=False)]
+
+        for p in candidates:
+            if self._is_within_root(p):
+                return p
+        raise PermissionError("That path is outside the folders you allowed in Settings.")
 
     def list_files(self, folder: str = "", limit: int = 100) -> str:
         base = self._safe(folder) if folder else (self.roots[0] if self.roots else None)

@@ -2,7 +2,7 @@
 
 **Status:** development prototype / v0.2.0. This is a native Python + Qt desktop app, not a website wrapped in a browser frame. The transparent orb and chat/settings windows are separate frameless desktop windows. Ollama handles text generation locally; an optional local Hugging Face Phonon model synthesizes spoken answers.
 
-> **Reality check:** the sphere currently uses a procedural Qt glass rendering (layered gradients, animated rings, highlights and a reactive edge). It is not yet a GPU shader that samples and warps the live desktop pixels. It leaves the desktop visible through its transparent window and approximates the refractive look. The chat UI is native Qt. Microphone input / speech-to-text is not implemented. TTS model licensing and system compatibility must be checked before use.
+> **Reality check:** the orb and chat/settings/diagnostics panels use native Qt windows. The orb and panels sample and refract desktop pixels when Windows capture exclusion is available; otherwise they fall back to painted glass. This is not a GPU shader. Microphone input / speech-to-text is not implemented. TTS model licensing and system compatibility must be checked before use.
 
 ## Contents
 
@@ -28,10 +28,10 @@
 |---|---|---|
 | Native desktop UI | Implemented | PySide6; not a browser wrapper |
 | Transparent, frameless, always-on-top orb | Implemented | Drag to reposition; click to open chat; right-click opens settings |
-| Animated glass appearance | Prototype | Qt gradients/rings/highlights; no live desktop displacement shader yet |
-| Bottom chat panel | Implemented | Frameless panel; Enter sends; response transcript |
+| Glass orb and panels | Prototype | Live desktop sampling/refraction when supported; painted fallback otherwise |
+| Bottom chat panel | Implemented | Frameless `GlassDialog`; Enter sends; response transcript |
 | Background/tray operation | Implemented | Close chat to hide it; tray menu has chat/settings/diagnostics/quit |
-| Separate settings window | Implemented | Model, TTS, folders, UI, privacy and logging controls |
+| Separate settings window | Implemented | `GlassDialog` shell; model, TTS, folders, UI, privacy and logging controls |
 | Ollama local text generation | Implemented | Uses local `/api/generate`; non-streaming request for each reply |
 | Fast and reasoning model choices | Implemented | Two independent model-name settings; choose the active route in Settings |
 | Spoken assistant answers | Implemented with setup | Phonon model is lazy-loaded; first synthesis can take a while |
@@ -92,6 +92,8 @@ crystal_companion/
 │   ├── tools.py          # allowlisted, read-only local text-file tools
 │   ├── tts.py            # lazy Phonon synthesis and local audio playback
 │   └── ui/
+│       ├── glass.py      # shared refractive shell for chat and dialogs
+│       ├── lens.py       # orb/panel desktop sampling and glass rendering
 │       └── windows.py    # orb, chat, settings, tray and diagnostics UI
 └── tests/
     └── test_tools.py     # folder allowlist and file-size/type safety tests
@@ -270,6 +272,7 @@ Settings are saved atomically to `%APPDATA%\CrystalCompanion\settings.json`. On 
 | `max_context_chars` | `14000` | Cap on file context prepared for the prompt |
 | `orb_size` | `180` | Orb diameter in pixels |
 | `orb_opacity` | `0.98` | Orb paint opacity |
+| `glass_panels` | `true` | Enable desktop-sampled glass for chat, settings and diagnostics |
 | `remember_history` | `true` | Persist messages in local SQLite |
 | `show_debug_panel` | `true` | UI preference for diagnostics (panel can also be opened from tray) |
 | `speak_errors` | `false` | Reserved for future spoken error handling |

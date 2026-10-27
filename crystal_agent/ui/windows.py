@@ -4,12 +4,13 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QTimer, QRectF, QPoint, QRunnable, QThreadPool, Signal, QObject
 from PySide6.QtGui import QColor, QPainter, QRadialGradient, QLinearGradient, QPen, QBrush, QAction, QIcon, QFont, QImage
 from PySide6.QtWidgets import (QApplication, QWidget, QMainWindow, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QTextEdit, QDialog, QFormLayout, QComboBox, QDoubleSpinBox, QSpinBox, QCheckBox,
+    QPushButton, QTextEdit, QFormLayout, QComboBox, QDoubleSpinBox, QSpinBox, QCheckBox,
     QListWidget, QFileDialog, QSystemTrayIcon, QMenu, QTabWidget, QMessageBox, QSlider, QGroupBox)
 from ..config import Settings, APP_DIR
 from ..agent import OllamaAgent
 from ..history import recent, add, initialize
 from ..tts import SpeechEngine, play_wav
+from .glass import GlassDialog
 from .lens import LensRenderer, exclude_from_capture
 
 class WorkerSignals(QObject):
@@ -66,7 +67,7 @@ class OrbWindow(QWidget):
         if img.width() != n or img.height() != n:
             img = img.scaled(n, n, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
         buf = np.frombuffer(img.constBits(), np.uint8).reshape(n, img.bytesPerLine() // 4, 4)
-        return buf[:, :n, :3]  # BGRA -> BGR
+        return buf[:, :n, :3].copy()  # BGRA -> BGR; keep pixels alive after the local QImage is released
 
     def _render_lens(self):
         import time
@@ -146,24 +147,25 @@ class OrbWindow(QWidget):
             self.drag_offset = None; self.press_global = None
             if delta.manhattanLength() < 5: self.open_chat()
 
-class ChatWindow(QWidget):
+class ChatWindow(GlassDialog):
     def __init__(self, app_controller):
-        super().__init__(); self.ctrl = app_controller; self.session_id = str(uuid.uuid4()); self.busy = False
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
-        self.setAttribute(Qt.WA_TranslucentBackground); self.resize(440, 390)
-        root = QVBoxLayout(self); root.setContentsMargins(12,12,12,12); root.setSpacing(8)
-        self.panel = QWidget(); self.panel.setObjectName("panel")
-        pl = QVBoxLayout(self.panel); pl.setContentsMargins(16,14,16,14); pl.setSpacing(8)
-        header = QHBoxLayout(); title = QLabel("CRYSTAL  /  LOCAL AGENT"); title.setObjectName("title"); header.addWidget(title); header.addStretch()
-        self.status = QLabel("● READY"); self.status.setObjectName("status"); header.addWidget(self.status)
-        close = QPushButton("×"); close.setFixedSize(28,28); close.clicked.connect(self.hide); header.addWidget(close); pl.addLayout(header)
+        super().__init__(
+            "CRYSTAL / LOCAL AGENT",
+            440,
+            390,
+            enabled=app_controller.settings.glass_panels,
+            flags=Qt.Dialog | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool,
+        )
+        self.ctrl = app_controller; self.session_id = str(uuid.uuid4()); self.busy = False
+        pl = self.body_layout
+        header = QHBoxLayout(); header.addStretch()
+        self.status = QLabel("● READY"); self.status.setObjectName("status"); header.addWidget(self.status); pl.addLayout(header)
         self.transcript = QTextEdit(); self.transcript.setReadOnly(True); self.transcript.setObjectName("transcript"); self.transcript.setPlaceholderText("Your conversation stays on this device."); pl.addWidget(self.transcript,1)
         row = QHBoxLayout(); self.entry = QLineEdit(); self.entry.setPlaceholderText("Ask Crystal anything…  ↵"); self.entry.returnPressed.connect(self.send_query); row.addWidget(self.entry,1)
         self.send_btn = QPushButton("Send ↗"); self.send_btn.clicked.connect(self.send_query); row.addWidget(self.send_btn); pl.addLayout(row)
         foot = QHBoxLayout(); settings_btn = QPushButton("⚙ Settings"); settings_btn.clicked.connect(self.ctrl.open_settings); foot.addWidget(settings_btn)
         debug_btn = QPushButton("⌁ Diagnostics"); debug_btn.clicked.connect(self.ctrl.toggle_debug); foot.addWidget(debug_btn); foot.addStretch()
         clear_btn = QPushButton("Clear view"); clear_btn.clicked.connect(self.transcript.clear); foot.addWidget(clear_btn); pl.addLayout(foot)
-        root.addWidget(self.panel)
         self.setStyleSheet(STYLE)
         self.entry.setFocus()
     def place_under_orb(self, orb):
@@ -204,11 +206,12 @@ class ChatWindow(QWidget):
     def tts_error(self,message):
         self.append("TTS ERROR",message); self.ctrl.log.error("TTS failed: %s",message); self.status.setText("● TEXT READY / TTS FAILED"); self.ctrl.orb.set_state("error")
 
-class SettingsWindow(QDialog):
+class SettingsWindow(GlassDialog):
     saved = Signal(object)
     def __init__(self, settings: Settings, logger):
-        super().__init__(); self.settings=settings; self.log=logger; self.setWindowTitle("Crystal Companion · Settings"); self.resize(690,650); self.setStyleSheet(STYLE)
-        root=QVBoxLayout(self); tabs=QTabWidget(); root.addWidget(tabs)
+        super().__init__("Crystal Companion / Settings", 690, 650, enabled=settings.glass_panels)
+        self.settings=settings; self.log=logger; self.setStyleSheet(STYLE)
+        root=self.body_layout; tabs=QTabWidget(); root.addWidget(tabs)
         # Models tab
         models=QWidget(); form=QFormLayout(models)
         self.host=QLineEdit(settings.ollama_host); form.addRow("Ollama endpoint",self.host)
@@ -234,6 +237,7 @@ class SettingsWindow(QDialog):
         self.history=QCheckBox("Persist conversation history locally"); self.history.setChecked(settings.remember_history); uf.addRow("History",self.history)
         self.startup=QCheckBox("Launch Crystal when I sign in to Windows"); self.startup.setChecked(settings.start_with_windows); uf.addRow("Startup",self.startup)
         self.debug=QCheckBox("Show live diagnostics panel"); self.debug.setChecked(settings.show_debug_panel); uf.addRow("Diagnostics",self.debug)
+        self.glass_panels=QCheckBox("Use glass effect for chat and dialogs"); self.glass_panels.setChecked(settings.glass_panels); uf.addRow("Glass panels",self.glass_panels)
         self.speak_errors=QCheckBox("Speak errors aloud"); self.speak_errors.setChecked(settings.speak_errors); uf.addRow("Error behaviour",self.speak_errors)
         self.maxfile=QSpinBox(); self.maxfile.setRange(1,20); self.maxfile.setValue(settings.max_file_mb); uf.addRow("Maximum text file size (MB)",self.maxfile)
         self.context=QSpinBox(); self.context.setRange(1000,50000); self.context.setSingleStep(1000); self.context.setValue(settings.max_context_chars); uf.addRow("Maximum file context characters",self.context)
@@ -250,7 +254,7 @@ class SettingsWindow(QDialog):
         s.ollama_host=self.host.text().strip().rstrip("/"); s.fast_model=self.fast.text().strip(); s.reasoning_model=self.reason.text().strip(); s.use_reasoning_model=self.use_reason.isChecked()
         s.temperature=self.temp.value(); s.max_tokens=self.tokens.value(); s.tts_enabled=self.tts_enabled.isChecked(); s.tts_model=self.tts_model.text().strip(); s.tts_speed=self.speed.value(); s.tts_device=self.device.currentText()
         s.allowed_folders=[self.folders.item(i).text() for i in range(self.folders.count())]; s.file_access_enabled=self.folder_enable.isChecked(); s.orb_size=self.size.value(); s.orb_opacity=self.opacity.value()
-        s.remember_history=self.history.isChecked(); s.start_with_windows=self.startup.isChecked(); s.show_debug_panel=self.debug.isChecked(); s.speak_errors=self.speak_errors.isChecked(); s.max_file_mb=self.maxfile.value(); s.max_context_chars=self.context.value(); s.log_level=self.loglevel.currentText(); return s
+        s.remember_history=self.history.isChecked(); s.start_with_windows=self.startup.isChecked(); s.show_debug_panel=self.debug.isChecked(); s.glass_panels=self.glass_panels.isChecked(); s.speak_errors=self.speak_errors.isChecked(); s.max_file_mb=self.maxfile.value(); s.max_context_chars=self.context.value(); s.log_level=self.loglevel.currentText(); return s
     def save_settings(self):
         try:
             s=self.collect()
@@ -281,10 +285,11 @@ class SettingsWindow(QDialog):
             r=httpx.get(host+"/api/tags",timeout=5); r.raise_for_status(); return ", ".join(m.get("name","") for m in r.json().get("models",[])) or "Connected, but no models are installed."
         w=Worker(run); w.signals.result.connect(lambda x: QMessageBox.information(self,"Ollama connection",f"Connected. Installed models:\n{x}")); w.signals.error.connect(lambda x: QMessageBox.warning(self,"Ollama connection failed",x)); QThreadPool.globalInstance().start(w)
 
-class DebugWindow(QDialog):
-    def __init__(self):
-        super().__init__(); self.setWindowTitle("Crystal · Live diagnostics"); self.resize(760,380); self.setStyleSheet(STYLE)
-        lay=QVBoxLayout(self); self.text=QTextEdit(); self.text.setReadOnly(True); lay.addWidget(self.text)
+class DebugWindow(GlassDialog):
+    def __init__(self, glass_enabled: bool = True):
+        super().__init__("Crystal / Live diagnostics", 760, 380, enabled=glass_enabled)
+        self.setStyleSheet(STYLE)
+        lay=self.body_layout; self.text=QTextEdit(); self.text.setReadOnly(True); lay.addWidget(self.text)
         row=QHBoxLayout(); refresh=QPushButton("Refresh log"); refresh.clicked.connect(self.refresh); row.addWidget(refresh); openlog=QPushButton("Open log folder"); openlog.clicked.connect(lambda: os.startfile(str(APP_DIR)) if sys.platform=="win32" else None); row.addWidget(openlog); row.addStretch(); lay.addLayout(row)
         self.timer=QTimer(self); self.timer.timeout.connect(self.refresh); self.timer.start(1200); self.refresh()
     def refresh(self):
@@ -316,14 +321,18 @@ class CompanionApp:
             self.settings_win=SettingsWindow(self.settings,self.log); self.settings_win.saved.connect(self.apply_settings); self.settings_win.finished.connect(lambda _: setattr(self,"settings_win",None))
         self.settings_win.show(); self.settings_win.raise_(); self.settings_win.activateWindow()
     def apply_settings(self,s):
-        self.settings=s; self.agent.settings=s; self.orb.apply_settings(s); self.log.setLevel(getattr(logging,s.log_level,logging.DEBUG)); self.log.info("Runtime settings applied")
+        self.settings=s; self.agent.settings=s; self.orb.apply_settings(s); self.chat.set_glass_enabled(s.glass_panels)
+        if self.settings_win is not None: self.settings_win.set_glass_enabled(s.glass_panels)
+        if self.debug is not None: self.debug.set_glass_enabled(s.glass_panels)
+        self.log.setLevel(getattr(logging,s.log_level,logging.DEBUG)); self.log.info("Runtime settings applied")
     def toggle_debug(self):
-        if self.debug is None: self.debug=DebugWindow(); self.debug.finished.connect(lambda _: setattr(self,"debug",None))
+        if self.debug is None: self.debug=DebugWindow(self.settings.glass_panels); self.debug.finished.connect(lambda _: setattr(self,"debug",None))
         self.debug.show(); self.debug.raise_(); self.debug.activateWindow()
 
 STYLE = """
 QWidget { color: #e7efff; font-family: 'Segoe UI'; font-size: 10pt; }
-QDialog, QWidget#panel { background: rgba(12,17,34,238); border: 1px solid rgba(135,190,255,110); border-radius: 18px; }
+QDialog#glass { background: transparent; border: none; }
+QWidget#panel { background: transparent; border: none; }
 QLabel#title { color: #b8d9ff; font-size: 9pt; font-weight: 700; letter-spacing: 1px; }
 QLabel#status { color: #8fffd8; font-size: 8pt; }
 QTextEdit#transcript, QTextEdit { background: rgba(5,10,22,175); border: 1px solid rgba(130,160,220,55); border-radius: 10px; padding: 8px; selection-background-color: #405b9c; }

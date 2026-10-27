@@ -25,6 +25,9 @@ class Settings:
     max_tokens: int = 600
     orb_size: int = 180
     orb_opacity: float = 0.98
+    orb_refraction: bool = True   # live glass refraction on the orb
+    orb_wobble: float = 1.0       # 0 = perfect circle, 1 = gentle blob
+    glass_panels: bool = True     # glass look for chat window + dialogs
     start_with_windows: bool = False
     show_debug_panel: bool = True
     speak_errors: bool = False
