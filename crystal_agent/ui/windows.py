@@ -172,12 +172,14 @@ class OrbWindow(QWidget):
         self._start_voice_input()
 
     def _start_voice_input(self):
-        """Begin listening for voice input using background STT.
+        """Begin listening for voice input using blocking STT loop.
 
-        Uses speech_recognition.listen_in_background so recording can be
-        stopped when the user releases the orb (hold-to-speak). A blocking
-        r.listen() would only stop on timeout, which made subtitles flash
-        and close before the user finished speaking.
+        Uses short blocking r.listen() calls in a loop, checking _is_holding
+        between each attempt so releasing the orb stops recording promptly
+        (within ~1s). listen_in_background() was avoided because its
+        underlying r.listen() can block indefinitely waiting for speech to
+        start, which made the subtitle flash and close before the user
+        finished speaking.
         """
         self._subtitle_text("Listening…", hold_ms=60000)
         def run_stt():
@@ -188,27 +190,38 @@ class OrbWindow(QWidget):
                 self._stt_result = None
                 self._stt_error = None
 
-                def callback(recognizer, audio):
-                    try:
-                        self._stt_result = recognizer.recognize_google(audio)
-                    except Exception as e:
-                        self._stt_error = str(e)
-
                 with mic as source:
                     r.adjust_for_ambient_noise(source, duration=0.3)
-                stop_listening = r.listen_in_background(mic, callback, phrase_time_limit=15)
-                # Wait while user is holding the orb (up to 30s)
-                import time as _t
-                for _ in range(600):  # 600 * 50ms = 30s max
-                    if not self._is_holding:
-                        break
-                    _t.sleep(0.05)
-                stop_listening(wait_for_stop=False)
-                if self._stt_result is not None:
+
+                # Loop while the user holds the orb. Each listen() call has a
+                # short timeout so we can poll _is_holding and stop on release.
+                while self._is_holding:
+                    try:
+                        audio = r.listen(source, timeout=1.0, phrase_time_limit=10)
+                    except sr.WaitTimeoutError:
+                        # No speech started within the timeout; keep listening
+                        # while the user is still holding.
+                        if not self._is_holding:
+                            break
+                        continue
+                    except sr.RequestError as e:
+                        raise RuntimeError(f"STT service error: {e}")
+                    try:
+                        self._stt_result = r.recognize_google(audio)
+                        if self._stt_result and self._stt_result.strip():
+                            return self._stt_result.strip()
+                    except sr.UnknownValueError:
+                        # Speech heard but not understood; keep listening
+                        if not self._is_holding:
+                            break
+                        continue
+                    except sr.RequestError as e:
+                        raise RuntimeError(f"STT service error: {e}")
+
+                # Loop exited because user released the orb
+                if self._stt_result:
                     return self._stt_result
-                if self._stt_error:
-                    raise RuntimeError(self._stt_error)
-                raise RuntimeError("No speech detected before release.")
+                raise RuntimeError("No speech recognized before release.")
             except Exception as e:
                 raise RuntimeError(f"Voice input failed: {e}")
 

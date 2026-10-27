@@ -14,7 +14,7 @@ A floating, frameless, always-on-top transparent orb. Click to open chat; right-
 - **Fallback:** If refraction is unavailable, paints a procedural glass orb using layered Qt gradients, animated rings, highlights, and a state-indicator ring.
 - **States:** `idle`, `thinking`, `speaking`, `listening`, `error` — each changes the rim glow color. `listening` is shown while holding the orb for voice input.
 - **Settings-driven:** `orb_size`, `orb_opacity`, `orb_refraction`, `orb_wobble`.
-- **Hold-to-speak:** Short press (< 400ms) opens chat; long press (≥ 400ms) activates background STT via `speech_recognition.listen_in_background`. Recording stops on orb release; recognized text is sent as a user query.
+- **Hold-to-speak:** Short press (< 400ms) opens chat; long press (≥ 400ms) activates background STT. Uses short blocking `r.listen(timeout=1.0, phrase_time_limit=10)` calls in a loop while holding; recording stops on orb release (within ~1s) and recognized text is sent as a user query.
 
 ### SubtitleWindow (`crystal_agent/ui/windows.py`)
 

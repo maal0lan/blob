@@ -4,7 +4,9 @@
 feature / ui / voice
 
 ## Status
-✅ **Implemented** — see `crystal_agent/ui/windows.py` (commit `b5ab7aa` on `feature/issue-11-hold-to-speak-subtitles`)
+⚠️ **Implemented — needs testing** — see `crystal_agent/ui/windows.py` (commits on `feature/issue-11-hold-to-speak-subtitles`)
+
+STT code path exists but has not been end-to-end verified (requires a microphone + network for Google Web Speech API).
 
 ## Summary
 Enhance the orb interaction and inference UI:
@@ -31,7 +33,7 @@ Enhance the orb interaction and inference UI:
 - `mousePressEvent`: starts hold timer, records press time
 - `mouseReleaseEvent`: short click → `open_chat()`; release after hold → `_stop_voice_input()`
 - `_on_hold()`: sets state to `"listening"`, calls `_start_voice_input()`
-- `_start_voice_input()`: shows "Listening…" subtitle, starts a `Worker` that runs `listen_in_background` with a callback; polls `_is_holding` every 50ms (max 30s); on release, stops background listening and returns recognized text
+- `_start_voice_input()`: shows "Listening…" subtitle, starts a `Worker` that runs a blocking STT loop: short `r.listen(timeout=1.0, phrase_time_limit=10)` calls in a loop while `_is_holding` is True; on orb release the loop exits and recognized text is returned (or error if nothing recognized). `listen_in_background()` was avoided because its underlying `r.listen()` can block indefinitely waiting for speech to start.
 - `_stop_voice_input()`: resets `_is_holding = False`, state to `"idle"`
 - `_on_voice_result(text)`: forwards recognized text to `ctrl._handle_voice_query(text)`
 - `_on_voice_error(message)`: shows error subtitle
