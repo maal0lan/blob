@@ -375,7 +375,7 @@ class SubtitleWindow(GlassDialog):
     """Frameless glass subtitle widget shown below the orb.
 
     Displays fade-in/fade-out animated text for spoken input and assistant
-    responses. Text appears briefly and fades out automatically.
+    responses. Text stays visible until explicitly replaced or cleared.
     """
 
     def __init__(self, glass_enabled: bool = True):
@@ -398,7 +398,7 @@ class SubtitleWindow(GlassDialog):
         self._opacity.setOpacity(0.0)
 
         self._anim = QPropertyAnimation(self._opacity, b"opacity", self)
-        self._anim.setDuration(300)
+        self._anim.setDuration(350)
         self._anim.setEasingCurve(QEasingCurve.InOutQuad)
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
@@ -406,32 +406,38 @@ class SubtitleWindow(GlassDialog):
 
         self.hide()
 
-    def show_text(self, text: str, hold_ms: int = 2500):
+    def show_text(self, text: str, hold_ms: int = 4000):
         """Show `text` with fade in, hold for `hold_ms`, then fade out."""
         self._hide_timer.stop()
         if self._anim.state() == QPropertyAnimation.Running:
             self._anim.stop()
+            self._anim.disconnect()
 
         self.label.setText(text)
         self.adjustSize()
         self._position_below_orb()
         self.show()
+        self._opacity.setOpacity(1.0)
+        self._anim.finished.disconnect()
 
-        # Fade in
-        self._anim.setStartValue(self._opacity.opacity())
-        self._anim.setEndValue(1.0)
-        self._anim.finished.connect(lambda: self._hold_then_fade(hold_ms))
-        self._anim.start()
-
-    def _hold_then_fade(self, hold_ms: int):
+        # Fade out after hold_ms
         self._hide_timer.start(hold_ms)
 
     def _fade_out(self):
+        self._hide_timer.stop()
         self._anim.finished.disconnect()
         self._anim.setStartValue(self._opacity.opacity())
         self._anim.setEndValue(0.0)
         self._anim.finished.connect(self.hide)
         self._anim.start()
+
+    def clear(self):
+        """Immediately clear and hide the subtitle."""
+        self._hide_timer.stop()
+        if self._anim.state() == QPropertyAnimation.Running:
+            self._anim.stop()
+        self.label.setText("")
+        self.hide()
 
     def _position_below_orb(self):
         # Position below the orb if we have a reference; otherwise center screen.
